@@ -1,28 +1,31 @@
-# vhr（微人事） — Spring AMQP Java Deserialization RCE (VHR-VULN-006)
+# vhr（微人事）mailserver 反序列化 RCE（VHR-VULN-006）
 
-| Field | Value |
-|-------|-------|
-| **Vendor** | lenve |
-| **Product** | vhr（微人事） |
-| **Version** | 1.0-SNAPSHOT |
-| **Type** | Deserialization of Untrusted Data |
-| **CWE** | CWE-502 |
-| **Authentication** | Network access to RabbitMQ Management / AMQP (`guest`/`guest`, ports `15672` / `5673`) |
+| 字段 | 内容 |
+|------|------|
+| 厂商 | lenve |
+| 产品 | vhr（微人事） |
+| 版本 | 1.0-SNAPSHOT |
+| 类型 | 不可信数据反序列化 |
+| CWE | CWE-502 |
+| 入口 | RabbitMQ Management / AMQP（默认 `guest`/`guest`，`15672` / `5673`） |
 
-## Summary
+## 简述
 
-`mailserver` consumes queue `javaboy.mail.queue` using Spring AMQP default Java serialization (`SimpleMessageConverter`). An attacker who can reach RabbitMQ Management HTTP API (or AMQP) can publish a crafted `application/x-java-serialized-object` message and achieve remote code execution on the **mailserver JVM host**.
+`mailserver` 消费 `javaboy.mail.queue` 时用的是 Spring 默认的 Java 原生序列化。  
+Management 或 AMQP 随便谁能连上，就可以投一条 `application/x-java-serialized-object`，在 **mailserver 所在机器** 上出 RCE。  
+注意：不是 RabbitMQ 容器自己在反序列化，Broker 只管转发。
 
-## Root cause
+代码上两处：
 
-- `RabbitConfig` does not configure a safe (e.g. JSON) message converter.
-- `MailReceiver` (`@RabbitListener`) deserializes untrusted queue bytes via `SerializationUtils.deserialize`.
+- `RabbitConfig` 没有换成 JSON 转换器  
+- `MailReceiver` 监听队列后走 `SerializationUtils.deserialize`
 
-## Proof of Concept (Yakit)
+## 复现（Yakit）
 
-Full copy-paste packets: [`../poc/VHR-VULN-006/YAKIT-PoC.md`](../poc/VHR-VULN-006/YAKIT-PoC.md)
+完整包：[`../poc/VHR-VULN-006/YAKIT-PoC.md`](../poc/VHR-VULN-006/YAKIT-PoC.md)  
+前提：mailserver 在跑，队列 `consumers=1`；classpath 里得有 gadget（验证时加了 `commons-beanutils`）。
 
-### 1) RabbitMQ Management with default credentials
+### 1. Management 弱口令
 
 ```http
 GET /api/overview HTTP/1.1
@@ -34,11 +37,11 @@ Connection: close
 
 ```
 
-**Result:** HTTP 200 (management_version 3.13.7)
+`guest:guest` 直接 200。
 
-![PoC-1 overview 200](./screenshots/VHR-VULN-006-01-overview.png)
+![overview](./screenshots/VHR-VULN-006-01-overview.png)
 
-### 2) Queue `javaboy.mail.queue` visible / enumerable
+### 2. 能列到业务队列
 
 ```http
 GET /api/queues/%2F/javaboy.mail.queue HTTP/1.1
@@ -50,38 +53,32 @@ Connection: close
 
 ```
 
-**Result:** HTTP 200, queue metadata returned (durable mail queue)
+![queue](./screenshots/VHR-VULN-006-02-queue-detail.png)
 
-![PoC-2 queue detail](./screenshots/VHR-VULN-006-02-queue-detail.png)
+### 3. 投 payload，宿主机落文件
 
-### 3) Publish Java deserialization payload → RCE on mailserver host
+往 `javaboy.mail.queue` 发一条 Java Chains 序列化对象（本地 PoC 是 `touch /tmp/vhr_deser_poc_ok`）。请求体太长，见 Yakit 文档。
 
-Publish via Management API to `javaboy.mail.queue` with `content_type=application/x-java-serialized-object` (CC/TemplatesImpl gadget → `touch /tmp/vhr_deser_poc_ok`). Full request body is in the Yakit PoC document.
-
-**Result:** `{"routed":true}` and host file created:
+Management 回 `{"routed":true}`。在 **mailserver 宿主机**（别进 rabbitmq 容器）：
 
 ```text
 ls -la /tmp/vhr_deser_poc_ok
--rw-r--r--  1 ...  wheel  0  ... /tmp/vhr_deser_poc_ok
 ```
 
-![PoC-3 publish routed + RCE evidence](./screenshots/VHR-VULN-006-03-publish-routed.png)
+![publish](./screenshots/VHR-VULN-006-03-publish-routed.png)
 
-![PoC-4 touch file on mailserver host](./screenshots/VHR-VULN-006-04-touch-file.png)
+![touch](./screenshots/VHR-VULN-006-04-touch-file.png)
 
-> RCE executes on the **mailserver application host**, not inside the RabbitMQ broker container.
+## 影响
 
-## Impact
+MQ 网段可达、又开着默认口令时，等于给 mailserver 进程开了一个远程执行入口。
 
-Remote code execution on the mailserver service host when RabbitMQ is network-reachable with weak/default credentials and Java serialization consumers are present.
+## 修法
 
-## Remediation
+消息改用 `Jackson2JsonMessageConverter`（或同类），禁止原生 Java 序列化。  
+关掉 guest 远程登、换强口令，Management / AMQP 别裸奔到公网。消费端 classpath 尽量少带 gadget。
 
-1. Configure `Jackson2JsonMessageConverter` (or equivalent); ban Java native serialization.
-2. Disable remote `guest` login; strong credentials + network isolation for AMQP/Management.
-3. Keep gadget libraries out of classpath where possible; apply least privilege to consumers.
+## 参考
 
-## References
-
-- Yakit PoC: [`../poc/VHR-VULN-006/YAKIT-PoC.md`](../poc/VHR-VULN-006/YAKIT-PoC.md)
-- Upstream project: https://github.com/lenve/vhr
+- Yakit：[`../poc/VHR-VULN-006/YAKIT-PoC.md`](../poc/VHR-VULN-006/YAKIT-PoC.md)  
+- 上游：https://github.com/lenve/vhr
