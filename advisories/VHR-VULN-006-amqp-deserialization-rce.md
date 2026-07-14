@@ -1,31 +1,32 @@
-# vhr（微人事）mailserver 反序列化 RCE（VHR-VULN-006）
+# vhr (微人事) — Spring AMQP Java Deserialization RCE (VHR-VULN-006)
 
-| 字段 | 内容 |
-|------|------|
-| 厂商 | lenve |
-| 产品 | vhr（微人事） |
-| 版本 | 1.0-SNAPSHOT |
-| 类型 | 不可信数据反序列化 |
+| Field | Value |
+|-------|-------|
+| Vendor | lenve |
+| Product | vhr |
+| Version | 1.0-SNAPSHOT |
+| Type | Deserialization of Untrusted Data |
 | CWE | CWE-502 |
-| 入口 | RabbitMQ Management / AMQP（默认 `guest`/`guest`，`15672` / `5673`） |
+| Entry | RabbitMQ Management / AMQP (`guest`/`guest`, ports `15672` / `5673`) |
 
-## 简述
+## Summary
 
-`mailserver` 消费 `javaboy.mail.queue` 时用的是 Spring 默认的 Java 原生序列化。  
-Management 或 AMQP 随便谁能连上，就可以投一条 `application/x-java-serialized-object`，在 **mailserver 所在机器** 上出 RCE。  
-注意：不是 RabbitMQ 容器自己在反序列化，Broker 只管转发。
+`mailserver` consumes `javaboy.mail.queue` with Spring’s default Java serialization.  
+Anyone who can talk to Management (or AMQP) can publish an `application/x-java-serialized-object` blob and get code execution on the **mailserver host**.
 
-代码上两处：
+The broker itself does not deserialize Java — it only forwards bytes.
 
-- `RabbitConfig` 没有换成 JSON 转换器  
-- `MailReceiver` 监听队列后走 `SerializationUtils.deserialize`
+Code:
 
-## 复现（Yakit）
+- `RabbitConfig` never switches to a JSON converter
+- `MailReceiver` (`@RabbitListener`) ends up in `SerializationUtils.deserialize`
 
-完整包：[`../poc/VHR-VULN-006/YAKIT-PoC.md`](../poc/VHR-VULN-006/YAKIT-PoC.md)  
-前提：mailserver 在跑，队列 `consumers=1`；classpath 里得有 gadget（验证时加了 `commons-beanutils`）。
+## PoC (Yakit)
 
-### 1. Management 弱口令
+Packets: [`../poc/VHR-VULN-006/YAKIT-PoC.md`](../poc/VHR-VULN-006/YAKIT-PoC.md)  
+Need `consumers=1` on the queue. Lab build adds `commons-beanutils` so the CC/TemplatesImpl chain fires.
+
+### 1. Default Management creds
 
 ```http
 GET /api/overview HTTP/1.1
@@ -37,11 +38,11 @@ Connection: close
 
 ```
 
-`guest:guest` 直接 200。
+`guest:guest` → HTTP 200.
 
 ![overview](./screenshots/VHR-VULN-006-01-overview.png)
 
-### 2. 能列到业务队列
+### 2. Queue visible
 
 ```http
 GET /api/queues/%2F/javaboy.mail.queue HTTP/1.1
@@ -55,11 +56,11 @@ Connection: close
 
 ![queue](./screenshots/VHR-VULN-006-02-queue-detail.png)
 
-### 3. 投 payload，宿主机落文件
+### 3. Publish gadget → host file
 
-往 `javaboy.mail.queue` 发一条 Java Chains 序列化对象（本地 PoC 是 `touch /tmp/vhr_deser_poc_ok`）。请求体太长，见 Yakit 文档。
+Publish to `javaboy.mail.queue` (`content_type=application/x-java-serialized-object`). Lab payload runs `touch /tmp/vhr_deser_poc_ok`. Full body is in the Yakit doc.
 
-Management 回 `{"routed":true}`。在 **mailserver 宿主机**（别进 rabbitmq 容器）：
+Management replies `{"routed":true}`. On the **mailserver host** (not inside the RabbitMQ container):
 
 ```text
 ls -la /tmp/vhr_deser_poc_ok
@@ -69,16 +70,16 @@ ls -la /tmp/vhr_deser_poc_ok
 
 ![touch](./screenshots/VHR-VULN-006-04-touch-file.png)
 
-## 影响
+## Impact
 
-MQ 网段可达、又开着默认口令时，等于给 mailserver 进程开了一个远程执行入口。
+Network-reachable MQ with default creds + Java ser consumers = RCE on the mailserver JVM.
 
-## 修法
+## Fix
 
-消息改用 `Jackson2JsonMessageConverter`（或同类），禁止原生 Java 序列化。  
-关掉 guest 远程登、换强口令，Management / AMQP 别裸奔到公网。消费端 classpath 尽量少带 gadget。
+Use `Jackson2JsonMessageConverter` (or similar). Drop native Java serialization.  
+Disable remote `guest`, use real passwords, keep Management/AMQP off the public net. Trim gadget-rich libs from the consumer classpath where you can.
 
-## 参考
+## References
 
-- Yakit：[`../poc/VHR-VULN-006/YAKIT-PoC.md`](../poc/VHR-VULN-006/YAKIT-PoC.md)  
-- 上游：https://github.com/lenve/vhr
+- Yakit: [`../poc/VHR-VULN-006/YAKIT-PoC.md`](../poc/VHR-VULN-006/YAKIT-PoC.md)
+- Upstream: https://github.com/lenve/vhr
